@@ -1,14 +1,15 @@
 import sqlite3
 from pathlib import Path
 
-DB = Path(__file__).resolve().parent.parent / "data" / "airq.db"
+DB = Path(__file__).resolve().parent.parent / "data" / "airq_v2.db"
 DB.parent.mkdir(exist_ok=True)
 
 SCHEMA = [
     """CREATE TABLE IF NOT EXISTS readings (
-        device_id TEXT, ts REAL, co2 REAL, pm25 REAL, voc REAL,
-        temp REAL, hum REAL, risk REAL, level TEXT,
-        co2_pred REAL, pred_risk REAL, pred_level TEXT)""",
+        device_id TEXT, ts REAL, pm25 REAL, gas REAL, temp REAL, hum REAL,
+        risk REAL, level TEXT,
+        pm25_pred REAL, pred_risk REAL, pred_level TEXT)""",
+    "CREATE INDEX IF NOT EXISTS idx_readings_dev_ts ON readings (device_id, ts)",
     """CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -47,12 +48,19 @@ for s in SCHEMA:
     _run(s)
 
 
-def save(r, ts, out):
+def save(device_id, ts, pm25, gas, temp, hum, out):
     fc = out["forecast"] if isinstance(out["forecast"], dict) else {}
-    _run("INSERT INTO readings VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-         (r.device_id, ts, r.co2, r.pm25, r.voc, r.temp, r.hum,
-          out["risk_score"], out["level"],
-          fc.get("co2_predicted"), fc.get("risk_score"), fc.get("level")))
+    _run("INSERT INTO readings VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+         (device_id, ts, pm25, gas, temp, hum, out["risk_score"], out["level"],
+          fc.get("pm25_expected_1h"), fc.get("risk_score"), fc.get("level")))
+
+
+def recent_pm(device_id, since_ts):
+    """Stored PM2.5 readings after since_ts, oldest first (used to rebuild the
+    history after a restart)."""
+    rows = _query("SELECT ts, pm25 FROM readings WHERE device_id = ? AND ts >= ? "
+                  "ORDER BY ts", (device_id, since_ts))
+    return [(r["ts"], r["pm25"]) for r in rows]
 
 
 def create_user(name, age, asthma, sensitivity, device_id):
